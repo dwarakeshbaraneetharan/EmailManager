@@ -21,10 +21,8 @@ import pdfkit
 
 # Request all access (permission to read/send/receive emails, manage the inbox, and more)
 SCOPES = ['https://mail.google.com/']
-testing_email = 'pythontesting308@gmail.com'
 
-sg.theme_previewer()
-sg.theme('Dark Amber')
+sg.theme('Material2')
 
 
 def gmail_authenticate():
@@ -60,17 +58,21 @@ def search_messages(API_service, query):
     return messages
 
 
-def parse_parts(API_service, parts, folder_name, message):
+def parse_parts(API_service, parts, folder_name, message, isDownloading):
     """
     Utility function that parses the content of an email partition
     """
-    folder_name = os.path.join("Downloads", folder_name)
-    if not os.path.isdir(folder_name):
-        try:
-            os.mkdir(folder_name)
-        except:
-            os.mkdir(folder_name.split("/")[0])
-            os.mkdir(folder_name)
+    totalSize = 0
+    if isDownloading:
+        if "/" not in folder_name:
+            folder_name = os.path.join("Downloads", folder_name)
+
+        if not os.path.isdir(folder_name):
+            try:
+                os.mkdir(folder_name)
+            except:
+                os.mkdir(folder_name.split("/")[0])
+                os.mkdir(folder_name)
     if parts:
         for part in parts:
             filename = part.get("filename")
@@ -78,11 +80,12 @@ def parse_parts(API_service, parts, folder_name, message):
             body = part.get("body")
             data = body.get("data")
             file_size = body.get("size")
+            totalSize += file_size
             part_headers = part.get("headers")
             if part.get("parts"):
                 # recursively call this function when we see that a part
                 # has parts inside
-                parse_parts(API_service, part.get("parts"), folder_name, message)
+                parse_parts(API_service, part.get("parts"), folder_name, message, isDownloading)
             if mimeType == "text/plain":
                 # if the email part is text plain
                 if data:
@@ -94,45 +97,52 @@ def parse_parts(API_service, parts, folder_name, message):
 
                 if not filename:
                     filename = "index.html"
+                if isDownloading:
+                    if os.path.isfile(os.path.join(folder_name, filename)):
+                        with open(os.path.join(folder_name, filename), 'r') as file:
+                            html_content = file.read()
+                        if urlsafe_b64decode(data).decode().strip() == html_content.strip():
+                            print("ALREADY EXISTS")
+                            continue
 
-                if os.path.isfile(os.path.join(folder_name, filename)):
-                    with open(os.path.join(folder_name, filename), 'r') as file:
-                        html_content = file.read()
-                    if urlsafe_b64decode(data).decode().strip() == html_content.strip():
-                        print("ALREADY EXISTS")
-                        continue
+                        folder_counter = 0
+                        while os.path.isfile(os.path.join(folder_name, filename)):
+                            folder_counter += 1
+                            folder_name = "{} ({})".format(folder_name, folder_counter)
 
-                    folder_counter = 0
-                    while os.path.isfile(os.path.join(folder_name, filename)):
-                        folder_counter += 1
-                        folder_name = "{} ({})".format(folder_name, folder_counter)
+                        os.mkdir(folder_name)
 
-                    os.mkdir(folder_name)
-
-                filepath = os.path.join(folder_name, filename)
-                print("Saving HTML to", filepath)
-                with open(filepath, "wb") as f:
-                    f.write(urlsafe_b64decode(data))
-                print(folder_name)
-                pdfkit.from_file(filepath, output_path=os.path.join(folder_name, folder_name.split("/")[1] + ".pdf"))
+                    filepath = os.path.join(folder_name, filename)
+                    print("Saving HTML to", filepath)
+                    with open(filepath, "wb") as f:
+                        f.write(urlsafe_b64decode(data))
+                    print(folder_name)
+                    try:
+                        pdfkit.from_file(filepath,
+                                         output_path=os.path.join(folder_name, folder_name.split("/")[1] + ".pdf"),
+                                         options={"enable-local-file-access": ""})
+                    except Exception:
+                        pass
             else:
                 # attachment other than a plain text or HTML
                 for part_header in part_headers:
                     part_header_name = part_header.get("name")
                     part_header_value = part_header.get("value")
                     if part_header_name == "Content-Disposition":
-                        if "attachment" in part_header_value:
+                        if "inline" or "attachment" in part_header_value:
                             # we get the attachment ID
                             # and make another request to get the attachment itself
-                            print("Saving the file:", filename, "size:", get_size_format(file_size))
-                            attachment_id = body.get("attachmentId")
-                            attachment = API_service.users().messages() \
-                                .attachments().get(id=attachment_id, userId='me', messageId=message['id']).execute()
-                            data = attachment.get("data")
-                            filepath = os.path.join(folder_name, filename)
-                            if data:
-                                with open(filepath, "wb") as f:
-                                    f.write(urlsafe_b64decode(data))
+                            if isDownloading:
+                                print("Saving the file:", filename, "size:", get_size_format(file_size))
+                                attachment_id = body.get("attachmentId")
+                                attachment = API_service.users().messages() \
+                                    .attachments().get(id=attachment_id, userId='me', messageId=message['id']).execute()
+                                data = attachment.get("data")
+                                filepath = os.path.join(folder_name, filename)
+                                if data:
+                                    with open(filepath, "wb") as f:
+                                        f.write(urlsafe_b64decode(data))
+    return totalSize
 
 
 # utility functions
@@ -170,7 +180,6 @@ def read_message(API_service, message):
     payload = msg['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
-    folder_name = "email"
     emailInfo = {"id": message, "parts": parts}
     if headers:
         # this section prints email basic info & creates a folder for the email
@@ -193,7 +202,6 @@ def read_message(API_service, message):
                 emailInfo["date"] = value
                 # we print the date when the message was sent
     if "folder_name" not in emailInfo:
-
         emailInfo["date"] = " ".join(emailInfo["date"].split(" ")[: -1])
         folder_name = clean(emailInfo["date"])
         print(folder_name)
@@ -209,30 +217,35 @@ allEmailIds = search_messages(service, "")
 allEmails = []
 
 for emailId in allEmailIds:
-    allEmails.append(read_message(service, emailId))
+    emailList = read_message(service, emailId)
+    emailList["total_size"] = (get_size_format(parse_parts(service, emailList["parts"], '', emailId, False)))
+    allEmails.append(emailList)
+    print("#"*50)
+    print(emailList["date"], emailList["total_size"])
+    print("#"*50)
 
 # Characters used for the checked and unchecked checkboxes.
 BLANK_BOX = '☐'
 CHECKED_BOX = '☑'
 
 # ------ Make the Table Data ------
-dataTable = [["checkbox", "sender", "subject"]]
+dataTable = [["checkbox", "sender", "subject", "size"]]
 
 for emailDict in allEmails:
-    dataTable.append([BLANK_BOX, emailDict["from"], emailDict["folder_name"]])
+    dataTable.append([BLANK_BOX, emailDict["from"], emailDict["folder_name"], emailDict["total_size"]])
 
 print(dataTable)
 headings = [str(dataTable[0][x]) + ' ..' for x in range(len(dataTable[0]))]
-headings[0] = 'Checkbox'
+headings[0] = ''
 selected = [i for i, row in enumerate(dataTable[1:][:]) if row[0] == CHECKED_BOX]
 # ------ Window Layout ------
 layout = [[sg.Button("download", disabled=True)],
-          [sg.Table(values=dataTable[1:][:], headings=headings, max_col_width=25, auto_size_columns=False,
-                    col_widths=[10, 10, 20, 20, 30, 5],
-                    display_row_numbers=True, justification='center', num_rows=20, key='-TABLE-',
+          [sg.Table(values=dataTable[1:][:], headings=headings, auto_size_columns=False,
+                    col_widths=[5, 25, 25], font="Helvetica 14",
+                    justification='center', num_rows=20, key='-TABLE-',
                     selected_row_colors='red on yellow',
-                    expand_x=False, expand_y=True, vertical_scroll_only=False,
-                    enable_click_events=True, font='_ 14'),
+                    vertical_scroll_only=False,
+                    enable_click_events=True),
            sg.Sizegrip()]]
 
 # ------ Create Window ------
@@ -240,17 +253,20 @@ window = sg.Window('Table with Checkbox', layout, resizable=True, finalize=True)
 
 # Highlight the rows (select) that have checkboxes checked
 window['-TABLE-'].update(values=dataTable[1:][:], select_rows=list(selected))
-
+window['-TABLE-'].expand(True, True)
+window['-TABLE-'].table_frame.pack(expand=True, fill='both')
+window.maximize()
 # ------ Event Loop ------
 while True:
     event, values = window.read()
     print(event, values)
+    print(type(event))
     if event == sg.WIN_CLOSED:
         break
     if event == 'download':
         print("Download pressed, and table values are", values["-TABLE-"])
         for v in values["-TABLE-"]:
-            parse_parts(service, allEmails[v]["parts"], allEmails[v]["folder_name"], allEmails[v]["id"])
+            parse_parts(service, allEmails[v]["parts"], allEmails[v]["folder_name"], allEmails[v]["id"], True)
     elif event[0] == '-TABLE-' and event[2][0] not in (
             None, -1):  # if clicked a data row rather than header or outside table
         row = event[2][0] + 1
