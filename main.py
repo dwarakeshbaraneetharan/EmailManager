@@ -343,7 +343,9 @@ layout = [[sg.Button("download", disabled=True, disabled_button_color='gainsboro
                     selected_row_colors='red on yellow',
                     # vertical_scroll_only=False,
                     enable_click_events=True),
-           sg.Sizegrip()]]
+           sg.Sizegrip()],
+          [sg.ProgressBar(key='-DOWNLOAD BAR-', max_value=10, orientation='h', size=(40, 20),
+                         bar_color=("deep sky blue", "light gray"), visible=False)]]
 
 # ------ Create Window ------
 window = sg.Window('Table with Checkbox', layout, resizable=True, finalize=True)
@@ -357,6 +359,7 @@ window['-DRIVE-'].UpdateBar(totalStorageUsed)
 window.maximize()
 firstClickOccurred = False
 firstClickTime = 0
+currentBar = 0
 # ------ Event Loop ------
 while True:
     event, values = window.read()
@@ -403,12 +406,17 @@ while True:
                                      row_colors=rowColors)  # Update the table and the selected rows
     if event == 'download':
         print("Download pressed, and table values are", values["-TABLE-"])
+        window['-DOWNLOAD BAR-'].update(visible=True, current_count=currentBar, max=len(values["-TABLE-"]))
         for v in values["-TABLE-"]:
             parse_parts(service, allEmails[v]["parts"], allEmails[v]["folder_name"], allEmails[v]["id"], True)
+            window['-DOWNLOAD BAR-'].update(current_count=currentBar+1, max=len(values["-TABLE-"]))
+            currentBar += 1
         allEmails, rowColors, dataTable = search_and_load(values['-SEARCH-'], "default")
         window['-TABLE-'].update(values=dataTable[1:][:],
                                  select_rows=list(selected),
                                  row_colors=rowColors)  # Update the table and the selected rows
+        window["-DOWNLOAD BAR-"].update(visible=False)
+        currentBar = 0
     if event == 'select all':
         for i in range(len(dataTable) - 1):
             dataTable[i + 1][0] = CHECKED_BOX
