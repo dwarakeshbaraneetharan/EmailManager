@@ -1,6 +1,8 @@
 import os
 import pickle
 # Gmail API utils
+import time
+
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -17,10 +19,11 @@ import PySimpleGUI as sg
 import random
 import string
 import webbrowser
+import subprocess
 import pdfkit
 
 # Request all access (permission to read/send/receive emails, manage the inbox, and more)
-SCOPES = ['https://mail.google.com/']
+SCOPES = ['https://mail.google.com/', "https://www.googleapis.com/auth/drive.metadata.readonly"]
 
 sg.theme('Material2')
 
@@ -32,7 +35,7 @@ def gmail_authenticate():
     if os.path.exists("token.pickle"):
         with open("token.pickle", "rb") as token:
             creds = pickle.load(token)
-    # if there are no (valid) credentials availablle, let the user log in.
+    # if there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -42,7 +45,7 @@ def gmail_authenticate():
         # save the credentials for the next run
         with open("token.pickle", "wb") as token:
             pickle.dump(creds, token)
-    return build('gmail', 'v1', credentials=creds)
+    return build('gmail', 'v1', credentials=creds), build('drive', 'v3', credentials=creds)
 
 
 def search_messages(API_service, query):
@@ -58,10 +61,25 @@ def search_messages(API_service, query):
     return messages
 
 
+def get_downloaded():
+    htmlPaths = []
+    downloadedIds = []
+    for (dir_path, dir_names, file_names) in os.walk("Downloads"):
+        if "index.html" in file_names:
+            htmlPaths.append(dir_path + "/index.html")
+    for path in htmlPaths:
+        with open(path, 'r') as htmlReader:
+            downloadedIds.append((htmlReader.readlines()[0].split("--")[1]))
+    return downloadedIds
+
+
 def parse_parts(API_service, parts, folder_name, message, isDownloading):
     """
     Utility function that parses the content of an email partition
     """
+    if message["id"] in get_downloaded():
+        isDownloading = False
+
     totalSize = 0
     if isDownloading:
         if "/" not in folder_name:
@@ -90,7 +108,6 @@ def parse_parts(API_service, parts, folder_name, message, isDownloading):
                 # if the email part is text plain
                 if data:
                     text = urlsafe_b64decode(data).decode()
-                    print(text)
             elif mimeType == "text/html":
                 # if the email part is an HTML content
                 # save the HTML file and optionally open it in the browser
@@ -114,8 +131,9 @@ def parse_parts(API_service, parts, folder_name, message, isDownloading):
 
                     filepath = os.path.join(folder_name, filename)
                     print("Saving HTML to", filepath)
-                    with open(filepath, "wb") as f:
-                        f.write(urlsafe_b64decode(data))
+                    htmldata = "<!--{}-->".format(message["id"]) + urlsafe_b64decode(data).decode()
+                    with open(filepath, "w+") as f:
+                        f.writelines(htmldata)
                     print(folder_name)
                     try:
                         pdfkit.from_file(filepath,
@@ -166,7 +184,6 @@ def clean(text):
 
 
 def read_message(API_service, message):
-    print(type(message))
     """
     This function takes Gmail API `service` and the given `message_id` and does the following:
         - Downloads the content of the email
@@ -204,7 +221,6 @@ def read_message(API_service, message):
     if "folder_name" not in emailInfo:
         emailInfo["date"] = " ".join(emailInfo["date"].split(" ")[: -1])
         folder_name = clean(emailInfo["date"])
-        print(folder_name)
         # if the email does not have a subject, then make a folder with "email" name
         # since folders are created based on subjects
         emailInfo["folder_name"] = folder_name
@@ -212,39 +228,67 @@ def read_message(API_service, message):
 
 
 # get the Gmail API service
-service = gmail_authenticate()
-allEmailIds = search_messages(service, "")
-allEmails = []
+service = gmail_authenticate()[0]
 
-for emailId in allEmailIds:
-    emailList = read_message(service, emailId)
-    emailList["total_size"] = (get_size_format(parse_parts(service, emailList["parts"], '', emailId, False)))
-    allEmails.append(emailList)
-    print("#"*50)
-    print(emailList["date"], emailList["total_size"])
-    print("#"*50)
+
+def search_and_load(query):
+    BLANK_BOX = '☐'
+
+    allEmailIds = search_messages(service, query)
+    for eId in allEmailIds:
+        emailList = read_message(service, eId)
+        totalSize = parse_parts(service, emailList["parts"], '', eId, False)
+        if totalSize == 0:
+            allEmailIds.remove(eId)
+    allEmails = []
+
+    rowColors = []
+    for emailId in allEmailIds:
+        emailList = read_message(service, emailId)
+        totalSize = parse_parts(service, emailList["parts"], '', emailId, False)
+        emailList["total_size"] = (get_size_format(totalSize))
+        if emailId["id"] in get_downloaded():
+            emailList["isDownloaded"] = True
+            rowColors.append((allEmailIds.index(emailId), "light gray"))
+        else:
+            emailList["isDownloaded"] = False
+            rowColors.append((allEmailIds.index(emailId), "white"))
+        allEmails.append(emailList)
+
+    # ------ Make the Table Data ------
+    dataTable = [["checkbox", "sender", "subject", "size"]]
+
+    for emailDict in allEmails:
+        dataTable.append([BLANK_BOX, emailDict["from"], emailDict["folder_name"], emailDict["total_size"]])
+
+    return allEmails, rowColors, dataTable
+
+
+allEmails, rowColors, dataTable = search_and_load('')
 
 # Characters used for the checked and unchecked checkboxes.
 BLANK_BOX = '☐'
 CHECKED_BOX = '☑'
 
-# ------ Make the Table Data ------
-dataTable = [["checkbox", "sender", "subject", "size"]]
+print(get_downloaded())
 
-for emailDict in allEmails:
-    dataTable.append([BLANK_BOX, emailDict["from"], emailDict["folder_name"], emailDict["total_size"]])
-
-print(dataTable)
 headings = [str(dataTable[0][x]) + ' ..' for x in range(len(dataTable[0]))]
 headings[0] = ''
-selected = [i for i, row in enumerate(dataTable[1:][:]) if row[0] == CHECKED_BOX]
+selected = []
 # ------ Window Layout ------
-layout = [[sg.Button("download", disabled=True)],
+layout = [[sg.Button("download", disabled=True, disabled_button_color='gray', font='Helvetica 14'), sg.Button("select all", font='Helvetica 14'), sg.Button("clear selected", font='Helvetica 14'), sg.Button("open saving directory", font='Helvetica 14'),
+           sg.Column(
+               [[sg.Input(key="-SEARCH-", background_color='light gray', text_color='blue', font='Helvetica 14'), sg.Button("search", font='Helvetica 14')]],
+               element_justification="center",
+               expand_x=True,
+               key="c1",
+               pad=(0, 0),
+           )],
           [sg.Table(values=dataTable[1:][:], headings=headings, auto_size_columns=False,
-                    col_widths=[5, 25, 25], font="Helvetica 14",
+                    col_widths=[5, 50, 50], font="Helvetica 18", row_colors=rowColors,
                     justification='center', num_rows=20, key='-TABLE-',
                     selected_row_colors='red on yellow',
-                    vertical_scroll_only=False,
+                    # vertical_scroll_only=False,
                     enable_click_events=True),
            sg.Sizegrip()]]
 
@@ -254,19 +298,50 @@ window = sg.Window('Table with Checkbox', layout, resizable=True, finalize=True)
 # Highlight the rows (select) that have checkboxes checked
 window['-TABLE-'].update(values=dataTable[1:][:], select_rows=list(selected))
 window['-TABLE-'].expand(True, True)
+window['-TABLE-'].update(row_colors=rowColors)
 window['-TABLE-'].table_frame.pack(expand=True, fill='both')
 window.maximize()
 # ------ Event Loop ------
 while True:
     event, values = window.read()
     print(event, values)
-    print(type(event))
     if event == sg.WIN_CLOSED:
         break
+    if event == 'search':
+        allEmails, rowColors, dataTable = search_and_load(values['-SEARCH-'])
+        window['-TABLE-'].update(values=dataTable[1:][:],
+                                 select_rows=list(selected),
+                                 row_colors=rowColors)  # Update the table and the selected rows
     if event == 'download':
         print("Download pressed, and table values are", values["-TABLE-"])
         for v in values["-TABLE-"]:
             parse_parts(service, allEmails[v]["parts"], allEmails[v]["folder_name"], allEmails[v]["id"], True)
+        allEmails, rowColors, dataTable = search_and_load(values['-SEARCH-'])
+        window['-TABLE-'].update(values=dataTable[1:][:],
+                                 select_rows=list(selected),
+                                 row_colors=rowColors)  # Update the table and the selected rows
+    if event == 'select all':
+        for i in range(len(dataTable) - 1):
+            dataTable[i + 1][0] = CHECKED_BOX
+            selected.append(i)
+        window['-TABLE-'].update(values=dataTable[1:][:],
+                                 select_rows=list(selected),
+                                 row_colors=rowColors)  # Update the table and the selected rows
+        window['download'].update(disabled=False)
+    if event == 'open saving directory':
+        if not os.path.isdir('Downloads'):
+            os.mkdir('Downloads')
+        subprocess.Popen(['open', 'Downloads'])
+    if event == 'clear selected':
+        selected.clear()
+        for i in range(len(dataTable) - 1):
+            dataTable[i + 1][0] = BLANK_BOX
+
+        window['-TABLE-'].update(values=dataTable[1:][:],
+                                 select_rows=list(selected),
+                                 row_colors=rowColors)  # Update the table and the selected rows
+        window['download'].update(disabled=True)
+
     elif event[0] == '-TABLE-' and event[2][0] not in (
             None, -1):  # if clicked a data row rather than header or outside table
         row = event[2][0] + 1
@@ -277,7 +352,8 @@ while True:
             selected.append(row - 1)
             dataTable[row][0] = CHECKED_BOX
         window['-TABLE-'].update(values=dataTable[1:][:],
-                                 select_rows=list(selected))  # Update the table and the selected rows
+                                 select_rows=list(selected),
+                                 row_colors=rowColors)  # Update the table and the selected rows
         if len(selected) > 0:
             window['download'].update(disabled=False)
         else:
