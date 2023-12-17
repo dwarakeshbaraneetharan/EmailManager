@@ -242,30 +242,46 @@ def read_message(API_service, message):
 service, drive_service = gmail_authenticate()
 
 
-def search_and_load(query, sorter):
+def search_and_load(query, sorter, isLoading):
     BLANK_BOX = '☐'
     totalSize = 0
     allEmailIds = search_messages(service, query)
+    numRan = 1
+    if isLoading:
+        loadingLayout = [[sg.Image('image.png',
+                                   expand_x=True, expand_y=True)]
+            , [sg.Text("loading email 0 of {}".format(len(allEmailIds)), key='-LOADING LABEL-', font='Helvetica 20',
+                       text_color='navy')],
+                         [sg.ProgressBar(key='-LOADING-', max_value=len(allEmailIds),
+                                         bar_color=("deep sky blue", "light gray"),
+                                         orientation='h', size=(200, 50))]]
+
+        loadingWindow = sg.Window('Loading Screen', loadingLayout, resizable=True, finalize=True,
+                                  element_justification='c')
+        loadingWindow.maximize()
+
+    allEmails = []
+
+    rowColors = []
     for eId in allEmailIds:
+        if isLoading:
+            loadingWindow["-LOADING-"].UpdateBar(current_count=numRan, max=len(allEmailIds))
+            loadingWindow["-LOADING LABEL-"].Update("loading email {} of {}...".format(numRan, len(allEmailIds)))
+            numRan += 1
         emailList = read_message(service, eId)
         if emailList["raw_size"] == 0:
             allEmailIds.remove(eId)
         else:
             totalSize += emailList["raw_size"]
-
-    allEmails = []
-
-    rowColors = []
-    for emailId in allEmailIds:
-        emailList = read_message(service, emailId)
-        if emailId["id"] in get_downloaded():
-            emailList["isDownloaded"] = True
-            rowColors.append((allEmailIds.index(emailId), "light gray"))
-        else:
-            emailList["isDownloaded"] = False
-            rowColors.append((allEmailIds.index(emailId), "white"))
+            if eId["id"] in get_downloaded():
+                emailList["isDownloaded"] = True
+                rowColors.append((allEmailIds.index(eId), "light gray"))
+            else:
+                emailList["isDownloaded"] = False
+                rowColors.append((allEmailIds.index(eId), "white"))
         allEmails.append(emailList)
-
+    if isLoading:
+        loadingWindow.close()
     if sorter == "size":
         allSorted = []
         sortedColors = []
@@ -292,8 +308,9 @@ def search_and_load(query, sorter):
     return allEmails, rowColors, dataTable, totalSize
 
 
-allEmails, rowColors, dataTable, totalSize = search_and_load('', "default")
-
+print(datetime.datetime.now())
+allEmails, rowColors, dataTable, totalSize = search_and_load('', "default", True)
+print(datetime.datetime.now())
 # Characters used for the checked and unchecked checkboxes.
 BLANK_BOX = '☐'
 CHECKED_BOX = '☑'
@@ -310,6 +327,7 @@ layout = [[sg.Button("download", disabled=True, disabled_button_color='gainsboro
            sg.Button("open saving directory", font='Helvetica 14'),
            sg.Button("delete", disabled=True, font='Helvetica 14', disabled_button_color='gainsboro',
                      button_color='indian red'),
+           sg.Button("range", disabled=True, font='Helvetica 14'),
            sg.Column(
                [[sg.Input(key="-SEARCH-", background_color='light gray', text_color='blue', font='Helvetica 14'),
                  sg.Button("search", font='Helvetica 14')]],
@@ -334,7 +352,8 @@ layout = [[sg.Button("download", disabled=True, disabled_button_color='gainsboro
                     enable_click_events=True),
            sg.Sizegrip()],
           [sg.ProgressBar(key='-DOWNLOAD BAR-', max_value=10, orientation='h', size=(150, 20),
-                          bar_color=("deep sky blue", "light gray"), visible=False), sg.Text(key="-EMAIL COUNTER-", font= 'Helvetica 14', visible=False)]]
+                          bar_color=("deep sky blue", "light gray"), visible=False),
+           sg.Text(key="-EMAIL COUNTER-", font='Helvetica 14', visible=False)]]
 
 # ------ Create Window ------
 window = sg.Window('Table with Checkbox', layout, resizable=True, finalize=True)
@@ -361,7 +380,7 @@ while True:
             if timeDiff < 500:
                 print(dataTable)
                 if event[2][1] == 3:
-                    allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "size")
+                    allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "size", False)
                     window['-TABLE-'].update(values=dataTable[1:][:],
                                              select_rows=list(selected),
                                              row_colors=rowColors)  # Update the table and the selected rows
@@ -375,7 +394,7 @@ while True:
     if event == sg.WIN_CLOSED:
         break
     if event == 'search':
-        allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default")
+        allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", False)
         window["-DRIVE-"].UpdateBar(totalSize)
         window['-TABLE-'].update(values=dataTable[1:][:],
                                  select_rows=list(selected),
@@ -390,10 +409,11 @@ while True:
             for v in values["-TABLE-"]:
                 delete_message(service, allEmails[v]["id"])
                 window['-DOWNLOAD BAR-'].update(current_count=currentBar + 1, max=len(values["-TABLE-"]))
-                window['-EMAIL COUNTER-'].update("deleting email {} out of {}".format(currentBar+2, len(values["-TABLE-"])),
-                                                visible=True)
+                window['-EMAIL COUNTER-'].update(
+                    "deleting email {} out of {}".format(currentBar + 2, len(values["-TABLE-"])),
+                    visible=True)
                 currentBar += 1
-            allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default")
+            allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", False)
             selected.clear()
             window['-STORAGE DISPLAY-'].update(
                 "{} of 15.00GB used".format(get_size_format(totalSize)))
@@ -411,11 +431,12 @@ while True:
         for v in values["-TABLE-"]:
             parse_parts(service, allEmails[v]["parts"], allEmails[v]["folder_name"], allEmails[v]["id"], True)
             window['-DOWNLOAD BAR-'].update(current_count=currentBar + 1, max=len(values["-TABLE-"]))
-            window['-EMAIL COUNTER-'].update("downloading email {} out of {}".format(currentBar+2, len(values["-TABLE-"])),
-                                             visible=True)
+            window['-EMAIL COUNTER-'].update(
+                "downloading email {} out of {}..".format(currentBar + 2, len(values["-TABLE-"])),
+                visible=True)
             currentBar += 1
         selected.clear()
-        allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default")
+        allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", False)
         window['-TABLE-'].update(values=dataTable[1:][:],
                                  select_rows=list(selected),
                                  row_colors=rowColors)  # Update the table and the selected rows
@@ -435,6 +456,16 @@ while True:
         if not os.path.isdir('Downloads'):
             os.mkdir('Downloads')
         subprocess.Popen(['open', 'Downloads'])
+    if event == 'range':
+        for e in range(min(selected), max(selected)):
+            if e not in selected:
+                selected.append(e)
+        window['-TABLE-'].update(values=dataTable[1:][:],
+                                 select_rows=list(selected),
+                                 row_colors=rowColors)  # Update the table and the selected rows
+
+        if len(selected) != 2:
+            window["range"].update(disabled="True")
     if event == 'clear selected':
         selected.clear()
         for i in range(len(dataTable) - 1):
@@ -445,6 +476,7 @@ while True:
                                  row_colors=rowColors)  # Update the table and the selected rows
         window['download'].update(disabled=True)
         window['delete'].update(disabled=True)
+        window['range'].update(disabled=True)
 
     elif event[0] == '-TABLE-' and event[2][0] not in (
             None, -1):  # if clicked a data row rather than header or outside table
@@ -458,6 +490,10 @@ while True:
         window['-TABLE-'].update(values=dataTable[1:][:],
                                  select_rows=list(selected),
                                  row_colors=rowColors)  # Update the table and the selected rows
+        if len(selected) == 2:
+            window['range'].update(disabled=False)
+        else:
+            window['range'].update(disabled=True)
         if len(selected) > 0:
             window['download'].update(disabled=False)
             window['delete'].update(disabled=False)
