@@ -221,9 +221,9 @@ def read_message(API_service, message):
                 emailInfo["to"] = value
                 # we print the To address
             if name.lower() == "subject":
-                if value != "":
-                    folder_name = clean(value)
-                    emailInfo["subject"] = value
+                folder_name = clean(value)
+                emailInfo["subject"] = value
+                if value != '':
                     emailInfo["folder_name"] = folder_name
 
             if name.lower() == "date":
@@ -300,10 +300,10 @@ def search_and_load(query, sorter, isLoading):
         rowColors = sortedColors[:]
 
     # ------ Make the Table Data ------
-    dataTable = [["checkbox", "sender", "subject", "size"]]
+    dataTable = [["checkbox", "date", "sender", "subject", "size"]]
 
     for emailDict in allEmails:
-        dataTable.append([BLANK_BOX, emailDict["from"], emailDict["folder_name"], emailDict["total_size"]])
+        dataTable.append([BLANK_BOX, " ".join(emailDict["date"].split(" ")[:5]), emailDict["from"], emailDict["subject"], emailDict["total_size"]])
 
     return allEmails, rowColors, dataTable, totalSize
 
@@ -327,7 +327,7 @@ layout = [[sg.Button("download", disabled=True, disabled_button_color='gainsboro
            sg.Button("open saving directory", font='Helvetica 14'),
            sg.Button("delete", disabled=True, font='Helvetica 14', disabled_button_color='gainsboro',
                      button_color='indian red'),
-           sg.Button("range", disabled=True, font='Helvetica 14'),
+           sg.Button("range", disabled=True, font='Helvetica 14', disabled_button_color='gainsboro'),
            sg.Column(
                [[sg.Input(key="-SEARCH-", background_color='light gray', text_color='blue', font='Helvetica 14'),
                  sg.Button("search", font='Helvetica 14')]],
@@ -345,7 +345,7 @@ layout = [[sg.Button("download", disabled=True, disabled_button_color='gainsboro
                element_justification='right'
            )],
           [sg.Table(values=dataTable[1:][:], headings=headings, auto_size_columns=False,
-                    col_widths=[5, 50, 50], font="Helvetica 18", row_colors=rowColors,
+                    col_widths=[5, 20, 40, 53], font="Helvetica 18", row_colors=rowColors,
                     justification='center', num_rows=20, key='-TABLE-',
                     selected_row_colors='red on yellow',
                     # vertical_scroll_only=False,
@@ -380,7 +380,7 @@ while True:
             if timeDiff < 500:
                 print(dataTable)
                 if event[2][1] == 3:
-                    allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "size", False)
+                    allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "size", True)
                     window['-TABLE-'].update(values=dataTable[1:][:],
                                              select_rows=list(selected),
                                              row_colors=rowColors)  # Update the table and the selected rows
@@ -394,7 +394,7 @@ while True:
     if event == sg.WIN_CLOSED:
         break
     if event == 'search':
-        allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", False)
+        allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", True)
         window["-DRIVE-"].UpdateBar(totalSize)
         window['-TABLE-'].update(values=dataTable[1:][:],
                                  select_rows=list(selected),
@@ -403,16 +403,17 @@ while True:
         if sg.Window("Confirm Deletion", [[sg.Text("Are you sure you want to delete these {} emails from your Google "
                                                    "Drive? This is final!".format(len(selected)), font="Helvetica 16")],
                                           [sg.Yes(), sg.No()]]).read(close=True)[0] == "Yes":
-            currentBar = 0
-            window['-DOWNLOAD BAR-'].update(visible=True, current_count=currentBar, max=len(values["-TABLE-"]))
-            window['-EMAIL COUNTER-'].update("deleting email 0 out of {}".format(len(values["-TABLE-"])), visible=True)
+            currentBar = 1
+            window['-DOWNLOAD BAR-'].update(visible=True, current_count=currentBar-1, max=len(values["-TABLE-"]))
+            window['-EMAIL COUNTER-'].update("deleting email 1 out of {}".format(len(values["-TABLE-"])), visible=True)
             for v in values["-TABLE-"]:
-                delete_message(service, allEmails[v]["id"])
-                window['-DOWNLOAD BAR-'].update(current_count=currentBar + 1, max=len(values["-TABLE-"]))
-                window['-EMAIL COUNTER-'].update(
-                    "deleting email {} out of {}".format(currentBar + 2, len(values["-TABLE-"])),
-                    visible=True)
                 currentBar += 1
+                delete_message(service, allEmails[v]["id"])
+                window['-DOWNLOAD BAR-'].update(current_count=currentBar, max=len(values["-TABLE-"]))
+                window['-EMAIL COUNTER-'].update(
+                    "deleting email {} out of {}".format(currentBar, len(values["-TABLE-"])),
+                    visible=True)
+
             allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", False)
             selected.clear()
             window['-STORAGE DISPLAY-'].update(
@@ -425,16 +426,17 @@ while True:
             window["-EMAIL COUNTER-"].update(visible=False)
     if event == 'download':
         print("Download pressed, and table values are", values["-TABLE-"])
-        currentBar = 0
-        window['-DOWNLOAD BAR-'].update(visible=True, current_count=currentBar, max=len(values["-TABLE-"]))
-        window['-EMAIL COUNTER-'].update("downloading email 0 out of {}".format(len(values["-TABLE-"])), visible=True)
+        currentBar = 1
+        window['-DOWNLOAD BAR-'].update(visible=True, current_count=currentBar-1, max=len(values["-TABLE-"]))
+        window['-EMAIL COUNTER-'].update("downloading email 1 out of {}".format(len(values["-TABLE-"])), visible=True)
+
         for v in values["-TABLE-"]:
             parse_parts(service, allEmails[v]["parts"], allEmails[v]["folder_name"], allEmails[v]["id"], True)
-            window['-DOWNLOAD BAR-'].update(current_count=currentBar + 1, max=len(values["-TABLE-"]))
-            window['-EMAIL COUNTER-'].update(
-                "downloading email {} out of {}..".format(currentBar + 2, len(values["-TABLE-"])),
-                visible=True)
             currentBar += 1
+            window['-DOWNLOAD BAR-'].update(current_count=currentBar, max=len(values["-TABLE-"]))
+            window['-EMAIL COUNTER-'].update(
+                "downloading email {} out of {}..".format(currentBar, len(values["-TABLE-"])),
+                visible=True)
         selected.clear()
         allEmails, rowColors, dataTable, totalSize = search_and_load(values['-SEARCH-'], "default", False)
         window['-TABLE-'].update(values=dataTable[1:][:],
