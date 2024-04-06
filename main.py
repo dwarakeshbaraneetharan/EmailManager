@@ -248,7 +248,7 @@ def search_and_load(query, sorter, isLoading):
     allEmailIds = search_messages(service, query)
     numRan = 1
     if isLoading:
-        loadingLayout = [[sg.Image('image.png',
+        loadingLayout = [[sg.Image('logo.png',
                                    expand_x=True, expand_y=True)]
             , [sg.Text("loading email 0 of {}".format(len(allEmailIds)), key='-LOADING LABEL-', font='Helvetica 20',
                        text_color='navy')],
